@@ -1,11 +1,12 @@
 import os
 import logging
-from datetime import datetime
 import json
+from datetime import datetime
 import yagmail
 import openai
 from tavily import TavilyClient
 from dotenv import load_dotenv
+from .filter import filter_tavily_results
 
 # Configure logging
 logging.basicConfig(
@@ -30,22 +31,23 @@ def search_andelsbolig():
     Search for Andelsbolig listings
     """
     try:
-        # Split into multiple smaller searches for each site
         all_results = []
         
         # DBA Search
-        dba_query = '("andelsbolig" OR "andelslejlighed") København "til salg" -solgt site:dba.dk/andelsbolig'
+        dba_query = '("andelsbolig" OR "andelslejlighed") København "til salg" -solgt -bytte site:dba.dk/andelsbolig'
         print("Søger DBA...")
         dba_results = tavily.search(query=dba_query, search_depth="advanced", max_results=5)
         if dba_results and 'results' in dba_results:
-            all_results.extend(dba_results['results'])
+            filtered_results = filter_tavily_results(dba_results, 'andelsbolig')
+            all_results.extend(filtered_results['results'])
 
         # Facebook Search
         fb_query = 'andelslejlighed København "til salg" -solgt -bytte site:facebook.com/marketplace'
         print("Søger Facebook...")
         fb_results = tavily.search(query=fb_query, search_depth="advanced", max_results=5)
         if fb_results and 'results' in fb_results:
-            all_results.extend(fb_results['results'])
+            filtered_results = filter_tavily_results(fb_results, 'andelsbolig')
+            all_results.extend(filtered_results['results'])
 
         print(f"Found {len(all_results)} results")
         print(json.dumps(all_results, indent=4))
@@ -67,35 +69,32 @@ def search_rental():
         print("Søger Boligportal...")
         bp_results = tavily.search(query=boligportal_query, search_depth="advanced", max_results=5)
         if bp_results and 'results' in bp_results:
-            all_results.extend(bp_results['results'])
-
-        # Boligportal Search
-        andelsbolig_query = 'andelsbolig København "til salg" -solgt site:andelsboliger.dk'
-        print("Søger Andelsboliger.dk...")
-        ab_results = tavily.search(query=andelsbolig_query, search_depth="advanced", max_results=5)
-        if ab_results and 'results' in ab_results:
-            all_results.extend(ab_results['results'])
+            filtered_results = filter_tavily_results(bp_results, 'lejebolig')
+            all_results.extend(filtered_results['results'])
 
         # Lejebolig.dk Search
         lejebolig_query = 'lejlighed København "til leje" -udlejet site:lejebolig.dk/lejebolig'
         print("Søger Lejebolig.dk...")
         lb_results = tavily.search(query=lejebolig_query, search_depth="advanced", max_results=5)
         if lb_results and 'results' in lb_results:
-            all_results.extend(lb_results['results'])
+            filtered_results = filter_tavily_results(lb_results, 'lejebolig')
+            all_results.extend(filtered_results['results'])
 
         # DBA Search
         dba_query = 'lejlighed København "til leje" -udlejet site:dba.dk/lejebolig'
         print("Søger DBA...")
         dba_results = tavily.search(query=dba_query, search_depth="advanced", max_results=5)
         if dba_results and 'results' in dba_results:
-            all_results.extend(dba_results['results'])
+            filtered_results = filter_tavily_results(dba_results, 'lejebolig')
+            all_results.extend(filtered_results['results'])
 
         # Facebook Search
         fb_query = 'lejlighed København "til leje" -udlejet site:facebook.com/marketplace'
         print("Søger Facebook...")
         fb_results = tavily.search(query=fb_query, search_depth="advanced", max_results=5)
         if fb_results and 'results' in fb_results:
-            all_results.extend(fb_results['results'])
+            filtered_results = filter_tavily_results(fb_results, 'lejebolig')
+            all_results.extend(filtered_results['results'])
 
         print(f"Found {len(all_results)} results")
         print(json.dumps(all_results, indent=4))
@@ -126,9 +125,12 @@ def process_search_results(andelsbolig_results, rental_results):
             - STRIKT minimum 45 m² (ignorer ALT under 45)
             - STRIKT maximum 140 m² (ignorer ALT over 140)
             - Område skal ligge i én af: {AREAS_STRING}
-            - URL skal være direkte link til en specifik bolig (ikke søgeresultater eller kategorisider)
-            - Ignorer hvis URL indeholder: "/search", "/soeg", "?soeg=", "/item/"
-            - Tjek at URL matcher det rigtige website (fx dba.dk links skal starte med "dba.dk/andelsbolig" eller "dba.dk/lejebolig")
+            - URL SKAL være direkte link til en specifik bolig
+            - STRIKT URL validering:
+              * Ignorer hvis URL indeholder: "/search", "/soeg", "?soeg=", "/item/", "side-", "page-"
+              * Ignorer hvis URL er til hovedkategori (fx "/lejeboliger/", "/andelsbolig/")
+              * URL skal indeholde specifik bolig-ID eller adresse
+              * Tjek at domæne matcher kilden
 
             Andelsboliger:
             - Max pris 3 000 000 DKK
@@ -137,6 +139,22 @@ def process_search_results(andelsbolig_results, rental_results):
             Lejeboliger:
             - Max leje 25 000 DKK / md
             - Ignorer hvis beskrivelse indeholder: "udlejet", "er desværre udlejet"
+
+            ############################
+            ##  URL VALIDERING         #
+            ############################
+            Godkendte URL mønstre:
+            - boligportal.dk/lejeboliger/<område>/<specifik-bolig-id>
+            - lejebolig.dk/lejebolig/<specifik-bolig-id>
+            - dba.dk/andelsbolig/<specifik-bolig-id>
+            - dba.dk/lejebolig/<specifik-bolig-id>
+            - facebook.com/marketplace/item/<specifik-id>
+
+            Eksempler på ugyldige URLs der skal ignoreres:
+            - boligportal.dk/lejeboliger/
+            - lejebolig.dk/lejebolig/search
+            - dba.dk/andelsbolig/side-2
+            - facebook.com/marketplace/search
 
             ############################
             ##  OUTPUT-FORMAT          #
@@ -176,18 +194,13 @@ def process_search_results(andelsbolig_results, rental_results):
             ############################
             ##  REGLER                 #
             ############################
-            1. Medtag KUN annoncer der matcher ALLE kriterier - vær MEGET striks med dette.
+            1. Medtag KUN annoncer der matcher ALLE kriterier - vær EKSTREMT striks med dette.
             2. Hvis et felt ikke kan udtrækkes, sæt feltet til null og tilføj navnet i "missing_fields".
             3. Fjern dubletter (samme url eller adresse+sqm).
             4. Summary SKAL matche det faktiske antal viste boliger i JSON output.
             5. Ingen kommentarer eller forklaringer uden for JSON!
-            6. VIGTIG URL VALIDERING:
-               - Ignorer URLs der indeholder: "/search", "/soeg", "?soeg=", "/item/"
-               - Ignorer URLs der ikke er direkte links til specifikke boliger
-               - Tjek at domænet matcher kilden (fx dba.dk links skal starte med "dba.dk/andelsbolig" eller "dba.dk/lejebolig")
-            7. VIGTIG INDHOLDSVALIDERING:
-               - Ignorer annoncer med tekst der indikerer at boligen er utilgængelig ("udlejet", "solgt", etc.)
-               - Ignorer annoncer der er søgeresultatsider eller kategorisider
+            6. Hvis en bolig har missing_fields der gør at vi ikke kan verificere kriterierne (fx manglende pris eller kvm), så UDELAD den helt.
+            7. VIGTIGST: Kun medtag boliger hvor URL er et direkte link til en specifik bolig.
             """
         
         response = openai.ChatCompletion.create(
@@ -309,45 +322,3 @@ def send_email_report(results, recipient_email):
         print(error_msg)
         logging.error(error_msg)
         raise
-
-def main():
-    # Recipient email
-    recipient_email = os.getenv('RECIPIENT_EMAIL')
-    
-    # Log search start
-    print("Starter boligsøgning...")
-    
-    # Perform Andelsbolig search
-    print("\nSøger efter andelsboliger...")
-    andelsbolig_results = search_andelsbolig()
-    
-    # Perform rental search
-    print("\nSøger efter lejeboliger...")
-    rental_results = search_rental()
-    
-    if andelsbolig_results or rental_results:
-        print("\nBehandler søgeresultater...")
-        # Process results with OpenAI
-        processed_results = process_search_results(andelsbolig_results, rental_results)
-        
-        if processed_results:
-            # Log results
-            logging.info("Søgning gennemført med succes")
-            logging.info(f"Resultater:\n{processed_results}")
-            print(f"Resultater:\n{processed_results}")
-            
-            # Send email
-            try:
-                send_email_report(processed_results, recipient_email)
-                print("Email sendt med succes")
-            except Exception as e:
-                print(f"Fejl ved afsendelse af email: {str(e)}")
-        else:
-            print("Kunne ikke behandle søgeresultater")
-            logging.error("Kunne ikke behandle søgeresultater")
-    else:
-        print("Ingen søgeresultater fundet eller der opstod en fejl under søgningen")
-        logging.error("Ingen søgeresultater fundet eller der opstod en fejl under søgningen")
-
-if __name__ == "__main__":
-    main() 

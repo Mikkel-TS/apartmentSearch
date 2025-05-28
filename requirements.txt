@@ -2,4 +2,5 @@ openai
 python-dotenv==1.0.0
 requests==2.31.0
 beautifulsoup4==4.12.2
-yagmail==0.15.293 
+yagmail==0.15.293
+tavily-python==0.3.1

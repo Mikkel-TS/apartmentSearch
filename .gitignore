@@ -2,6 +2,9 @@
 .env
 .env.*
 
+# Configuration files
+mapping.json
+
 # Python
 __pycache__/
 *.py[cod]

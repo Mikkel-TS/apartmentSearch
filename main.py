@@ -5,11 +5,27 @@ from utils.search import (
     send_email_report
 )
 import os
+import json
 import logging
 
+def load_recipients():
+    """
+    Load recipient emails from mapping.json
+    """
+    try:
+        with open('mapping.json', 'r') as f:
+            mapping = json.load(f)
+            return mapping.get('recipients', [])
+    except Exception as e:
+        print(f"Error loading mapping.json: {str(e)}")
+        return []
+
 def main():
-    # Recipient email
-    recipient_email = os.getenv('RECIPIENT_EMAIL')
+    # Load recipients from mapping
+    recipients = load_recipients()
+    if not recipients:
+        print("No recipients found in mapping.json")
+        return
     
     # Log search start
     print("Starter boligsøgning...")
@@ -33,12 +49,19 @@ def main():
             logging.info(f"Resultater:\n{processed_results}")
             print(f"Resultater:\n{processed_results}")
             
-            # Send email
-            try:
-                send_email_report(processed_results, recipient_email)
-                print("Email sendt med succes")
-            except Exception as e:
-                print(f"Fejl ved afsendelse af email: {str(e)}")
+            # Send email to each recipient
+            for recipient in recipients:
+                try:
+                    email = recipient.get('email')
+                    name = recipient.get('name', 'Unknown')
+                    if email:
+                        print(f"\nSender email til {name} ({email})...")
+                        send_email_report(processed_results, email)
+                        print(f"Email sendt med succes til {email}")
+                    else:
+                        print(f"Manglende email for modtager: {name}")
+                except Exception as e:
+                    print(f"Fejl ved afsendelse af email til {email}: {str(e)}")
         else:
             print("Kunne ikke behandle søgeresultater")
             logging.error("Kunne ikke behandle søgeresultater")

@@ -30,16 +30,20 @@ def search_andelsbolig():
     Search for Andelsbolig listings
     """
     try:
-        search_query = f"""("andelsbolig" OR "andelslejlighed") 
-        ("Vesterbro" OR "Østerbro" OR "Frederiksberg" OR "København K" OR "Nørrebro" OR "Valby" OR "Christianshavn")
-        "til salg" (60 OR 70 OR 80 OR 90 OR 100) m2
-        -"solgt" -"reserveret"
-        site:dba.dk OR site:boliga.dk OR site:facebook.com/marketplace"""
+        ANDELS_QUERY = (
+            '("andelsbolig" OR "andelslejlighed") '
+            '(Vesterbro OR Østerbro OR Frederiksberg OR "København K" OR Nørrebro OR Valby OR Christianshavn) '
+            '("til salg" OR sælges) '
+            '("60..100 m2" OR "60..100 kvm") '
+            '-solgt -reserveret '
+            '(site:dba.dk OR site:bolighub.dk OR site:boligzonen.dk OR '
+            'site:boligportal.dk OR site:findboliger.dk OR site:facebook.com/marketplace)'
+        )
         
-        print(f"Søger efter andelsboliger med søgning: {search_query}")
+        print(f"Søger efter andelsboliger med søgning: {ANDELS_QUERY}")
         
         search_result = tavily.search(
-            query=search_query,
+            query=ANDELS_QUERY,
             search_depth="advanced",
             max_results=15
         )
@@ -55,31 +59,39 @@ def search_rental():
     Search for rental apartments
     """
     try:
-        # Do two separate searches to maximize results
-        search_query1 = f"""("lejlighed" OR "lejebolig") 
-        ("Vesterbro" OR "Østerbro" OR "Frederiksberg" OR "København K" OR "Nørrebro" OR "Valby" OR "Christianshavn")
-        "til leje" (60 OR 70 OR 80 OR 90 OR 100) m2
-        -"kollegium" -"værelse" -"fremleje" -"udlejet"
-        site:boligportal.dk OR site:lejebolig.dk OR site:findbolig.nu"""
-        
-        search_query2 = f"""("lejlighed" OR "lejebolig") København
-        ("Vesterbro" OR "Østerbro" OR "Frederiksberg" OR "København K" OR "Nørrebro" OR "Valby" OR "Christianshavn")
-        "leje" "pr måned" OR "pr. måned" OR "kr/md" OR "kr/mdr"
-        -"kollegium" -"værelse" -"fremleje" -"udlejet"
-        site:dba.dk OR site:facebook.com/marketplace"""
-        
-        print(f"Søger efter lejeboliger (del 1) med søgning: {search_query1}")
+        # ---------- 2) Lejeboliger – klassiske sites ----------
+        RENT_QUERY_1 = (
+            '("lejlighed" OR lejebolig) '
+            '(Vesterbro OR Østerbro OR Frederiksberg OR "København K" OR Nørrebro OR Valby OR Christianshavn) '
+            '("til leje" OR udlejes) '
+            '("60..100 m2" OR "60..100 kvm") '
+            '-kollegium -værelse -fremleje -møbleret -udlejet '
+            '(site:boligportal.dk OR site:lejebolig.dk OR site:findbolig.nu)'
+        )
+
+        # ---------- 3) Lejeboliger – DBA + Facebook ----------
+        RENT_QUERY_2 = (
+            '("lejlighed" OR lejebolig) '
+            '(Vesterbro OR Østerbro OR Frederiksberg OR "København K" OR Nørrebro OR Valby OR Christianshavn) '
+            '("til leje" OR udlejes) '
+            '("60..100 m2" OR "60..100 kvm") '
+            '("kr/md" OR "pr måned") '
+            '-kollegium -værelse -fremleje -møbleret -udlejet '
+            '(site:dba.dk OR site:facebook.com/marketplace)'
+        )
+
+        print(f"Søger efter lejeboliger (del 1) med søgning: {RENT_QUERY_1}")
         
         results1 = tavily.search(
-            query=search_query1,
+            query=RENT_QUERY_1,
             search_depth="advanced",
             max_results=10
         )
         
-        print(f"Søger efter lejeboliger (del 2) med søgning: {search_query2}")
+        print(f"Søger efter lejeboliger (del 2) med søgning: {RENT_QUERY_2}")
         
         results2 = tavily.search(
-            query=search_query2,
+            query=RENT_QUERY_2,
             search_depth="advanced",
             max_results=10
         )
@@ -102,54 +114,70 @@ def process_search_results(andelsbolig_results, rental_results):
     """
     try:
         prompt = f"""
-        Analyze and structure these apartment search results from Copenhagen.
-        Please respond in Danish.
-        
-        Søgekriterier:
-        
-        For Andelsboliger:
-        - Maksimal Pris: 3.000.000 kr
-        - Minimum Størrelse: 60 m²
-        - Områder: {AREAS_STRING}
-        
-        For Lejeboliger:
-        - Maksimal Månedlig Leje: 25.000 kr
-        - Minimum Størrelse: 60 m²
-        - Områder: {AREAS_STRING}
-        
-        Søgeresultater:
-        
-        Andelsbolig Resultater:
-        {json.dumps(andelsbolig_results, indent=2)}
-        
-        Lejebolig Resultater:
-        {json.dumps(rental_results, indent=2)}
-        
-        Strukturér resultaterne i to sektioner:
-        
-        1. Andelsboliger:
-        For hver relevant bolig, inkluder:
-        - Adresse
-        - Pris (i DKK)
-        - Størrelse i m²
-        - Link til annoncen
-        - Kilde (website)
-        - Nøglefunktioner
-        - Område (hvilket af målområderne)
-        
-        2. Lejeboliger:
-        For hver relevant bolig, inkluder:
-        - Adresse
-        - Månedlig leje (i DKK)
-        - Størrelse i m²
-        - Link til annoncen
-        - Kilde (website)
-        - Nøglefunktioner
-        - Område (hvilket af målområderne)
-        
-        Inkluder kun boliger der matcher ALLE søgekriterier. Hvis der mangler information til at verificere kriterierne, noter dette i beskrivelsen.
-        Formatér output på en overskuelig måde med tydelige sektioner og mellemrum.
-        """
+            Du er bolig-dataassistent. Svar KUN med gyldig JSON.
+
+            ############################
+            ##  INPUT                  #
+            ############################
+            {{"andelsbolig_raw": {json.dumps(andelsbolig_results)},
+            "rental_raw":      {json.dumps(rental_results)}}}
+
+            ############################
+            ##  KRITERIER              #
+            ############################
+            Fælles:
+            - Min. 60 m²
+            - Område skal ligge i én af: {AREAS_STRING}
+
+            Andelsboliger:
+            - Max pris 3 000 000 DKK
+
+            Lejeboliger:
+            - Max leje 25 000 DKK / md
+
+            ############################
+            ##  OUTPUT-FORMAT          #
+            ############################
+            Returnér **KUN** ét JSON-objekt med EXAKT denne struktur:
+
+            {{
+            "summary": "<kort dansk tekst max 4 linjer, fx '5 andelsboliger og 7 lejeboliger matcher. Billigste andel: …'>",
+
+            "andelsboliger": [
+                {{
+                "address":        "<string>",
+                "price_dkk":      <integer>,          // totalpris
+                "sqm":            <integer>,
+                "url":            "<string>",
+                "source":         "<domain>",
+                "area":           "<Vesterbro|Østerbro|…>",
+                "key_features":   "<kort sætning>",
+                "missing_fields": ["price_dkk", "sqm"] // tom array hvis ingen mangler
+                }}  // max 10, sorter stigende på price_dkk
+            ],
+
+            "lejeboliger": [
+                {{
+                "address":        "<string>",
+                "rent_dkk":       <integer>,          // månedlig leje
+                "sqm":            <integer>,
+                "url":            "<string>",
+                "source":         "<domain>",
+                "area":           "<Vesterbro|Østerbro|…>",
+                "key_features":   "<kort sætning>",
+                "missing_fields": ["rent_dkk", "sqm"] // tom array hvis ingen mangler
+                }}  // max 10, sorter stigende på rent_dkk
+            ]
+            }}
+
+            ############################
+            ##  REGLER                 #
+            ############################
+            1. Medtag kun annoncer der matcher ALLE kriterier.
+            2. Hvis et felt ikke kan udtrækkes, sæt feltet til null og tilføj navnet i "missing_fields".
+            3. Fjern dubletter (samme url eller adresse+sqm).
+            4. Ingen kommentarer eller forklaringer uden for JSON!
+            """
         
         response = openai.ChatCompletion.create(
             model="gpt-4",

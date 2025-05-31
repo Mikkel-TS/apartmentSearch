@@ -2,11 +2,11 @@ import os
 import logging
 import json
 from datetime import datetime
-import yagmail
 from openai import OpenAI
 from tavily import TavilyClient
 from dotenv import load_dotenv
 from .filter import filter_tavily_results
+from .gmail_sender import GmailSender
 
 # Configure logging
 logging.basicConfig(
@@ -18,9 +18,10 @@ logging.basicConfig(
 # Load environment variables
 load_dotenv()
 
-# Initialize OpenAI client
+# Initialize clients
 client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 tavily = TavilyClient(api_key=os.getenv('TAVILY_API_KEY'))
+gmail_sender = GmailSender()
 
 # Define target areas
 TARGET_AREAS = ["Vesterbro", "Østerbro", "Frederiksberg", "Indre by", "Nørrebro", "Valby", "Christianshavn"]
@@ -247,28 +248,18 @@ def process_search_results(andelsbolig_results, rental_results):
 
 def send_email_report(results, recipient_email):
     """
-    Send search results via email
+    Send search results via email using Gmail API
     """
     try:
-        print(f"Debug: Results input to send_email_report:")
-        print(f"Type: {type(results)}")
-        print(f"Value: {results}")
-        
         print(f"Attempting to send email to: {recipient_email}")
         print(f"Using email address: {os.getenv('EMAIL_ADDRESS')}")
         
-        if not os.getenv('EMAIL_ADDRESS') or not os.getenv('EMAIL_PASSWORD'):
-            raise ValueError("Email credentials not found in .env file")
+        if not os.getenv('EMAIL_ADDRESS'):
+            raise ValueError("Email address not found in .env file")
             
         if not recipient_email:
-            raise ValueError("Recipient email not found in .env file")
+            raise ValueError("Recipient email not provided")
 
-        # Initialize yagmail SMTP object
-        print("Initializing SMTP connection...")
-        yag = yagmail.SMTP({
-            os.getenv('EMAIL_ADDRESS'): "Apartment Search"
-        }, os.getenv('EMAIL_PASSWORD'))
-        
         # Parse the results as JSON to ensure proper formatting
         results_json = json.loads(results) if isinstance(results, str) else results
         
@@ -341,12 +332,7 @@ def send_email_report(results, recipient_email):
         """
         
         print("Sending email...")
-        # Send email with HTML content
-        yag.send(
-            to=recipient_email,
-            subject=subject,
-            contents=[html_content]
-        )
+        gmail_sender.send_email(recipient_email, subject, html_content)
         
         print(f"Email sent successfully to {recipient_email}")
         logging.info(f"Email sent successfully to {recipient_email}")

@@ -37,10 +37,4 @@ def filter_tavily_results(results, listing_type):
     if not results or 'results' not in results:
         return results
         
-    filtered_results = []
-    for result in results['results']:
-        url = result.get('url', '')
-        if validate_listing_url(url, listing_type):
-            filtered_results.append(result)
-    
-    return {'results': filtered_results}
+    return results  # Return all results without filtering

@@ -64,13 +64,25 @@ def search_rental():
     try:
         all_results = []
 
-        # Boligportal Search
-        boligportal_query = 'lejlighed København "til leje" -udlejet site:boligportal.dk/lejeboliger'
-        print("Søger Boligportal...")
-        bp_results = tavily.search(query=boligportal_query, search_depth="advanced", max_results=5)
-        if bp_results and 'results' in bp_results:
-            filtered_results = filter_tavily_results(bp_results, 'lejebolig')
-            all_results.extend(filtered_results['results'])
+        BoligportalQueries = [
+            '3 vær lejlighed københavn Ø inurl:-id- site:boligportal.dk/lejligheder/k%C3%B8benhavn',
+            '3 vær lejlighed Vesterbro inurl:-id- site:boligportal.dk/lejligheder/k%C3%B8benhavn',
+            '3 vær lejlighed frederiksberg inurl:-id- site:boligportal.dk/lejligheder/k%C3%B8benhavn',
+            '3 vær lejlighed nørrebro inurl:-id- site:boligportal.dk/lejligheder/k%C3%B8benhavn',
+            '3 vær lejlighed København K inurl:-id- site:boligportal.dk/lejligheder/k%C3%B8benhavn',
+            '2 vær lejlighed københavn Ø inurl:-id- site:boligportal.dk/lejligheder/k%C3%B8benhavn',
+            '2 vær lejlighed Vesterbro inurl:-id- site:boligportal.dk/lejligheder/k%C3%B8benhavn',
+            '2 vær lejlighed frederiksberg inurl:-id- site:boligportal.dk/lejligheder/k%C3%B8benhavn',
+            '2 vær lejlighed nørrebro inurl:-id- site:boligportal.dk/lejligheder/k%C3%B8benhavn',
+            '2 vær lejlighed København K inurl:-id- site:boligportal.dk/lejligheder/k%C3%B8benhavn',
+        ]
+
+        for query in BoligportalQueries:
+            print(f"Søger Boligportal med query: {query}")
+            bp_results = tavily.search(query=query, search_depth="advanced", max_results=5)
+            if bp_results and 'results' in bp_results:
+                filtered_results = filter_tavily_results(bp_results, 'lejebolig')
+                all_results.extend(filtered_results['results'])
 
         # Lejebolig.dk Search
         lejebolig_query = 'lejlighed København "til leje" -udlejet site:lejebolig.dk/lejebolig'
@@ -109,6 +121,10 @@ def process_search_results(andelsbolig_results, rental_results):
     Use OpenAI to process and structure both search results
     """
     try:
+        print("Debug: Input to process_search_results:")
+        print(f"andelsbolig_results: {json.dumps(andelsbolig_results, indent=2)}")
+        print(f"rental_results: {json.dumps(rental_results, indent=2)}")
+        
         prompt = f"""
             Du er bolig-dataassistent. Svar KUN med gyldig JSON.
 
@@ -122,96 +138,108 @@ def process_search_results(andelsbolig_results, rental_results):
             ##  KRITERIER              #
             ############################
             Fælles:
+            - Størrelse: Forsøg at udtrække fra titel (fx "93m2" eller "93 m²") eller beskrivelse
             - STRIKT minimum 45 m² (ignorer ALT under 45)
             - STRIKT maximum 140 m² (ignorer ALT over 140)
             - Område skal ligge i én af: {AREAS_STRING}
-            - URL SKAL være direkte link til en specifik bolig
-            - STRIKT URL validering:
-              * Ignorer hvis URL indeholder: "/search", "/soeg", "?soeg=", "/item/", "side-", "page-"
-              * Ignorer hvis URL er til hovedkategori (fx "/lejeboliger/", "/andelsbolig/")
-              * URL skal indeholde specifik bolig-ID eller adresse
-              * Tjek at domæne matcher kilden
+            - URL skal være direkte link til en specifik bolig (ikke søgesider)
 
             Andelsboliger:
-            - Max pris 3 000 000 DKK
+            - Max pris 3 000 000 DKK hvis prisen er angivet
             - Ignorer hvis beskrivelse indeholder: "solgt", "reserveret", "overtaget"
 
             Lejeboliger:
-            - Max leje 25 000 DKK / md
+            - Max leje 20 000 DKK / md hvis lejen er angivet
             - Ignorer hvis beskrivelse indeholder: "udlejet", "er desværre udlejet"
 
             ############################
-            ##  URL VALIDERING         #
+            ##  PARSING REGLER         #
             ############################
-            Godkendte URL mønstre:
-            - boligportal.dk/lejeboliger/<område>/<specifik-bolig-id>
-            - lejebolig.dk/lejebolig/<specifik-bolig-id>
-            - dba.dk/andelsbolig/<specifik-bolig-id>
-            - dba.dk/lejebolig/<specifik-bolig-id>
-            - facebook.com/marketplace/item/<specifik-id>
+            1. Størrelse: 
+               - Led efter mønstre som "93m2", "93 m²", "93 kvm" i titel og beskrivelse
+               - Hvis størrelse findes i titel (fx "93m2-3-vaer"), brug dette tal
+               - Hvis flere størrelser nævnes, brug den første
 
-            Eksempler på ugyldige URLs der skal ignoreres:
-            - boligportal.dk/lejeboliger/
-            - lejebolig.dk/lejebolig/search
-            - dba.dk/andelsbolig/side-2
-            - facebook.com/marketplace/search
+            2. Område:
+               - Tjek for områdenavne i både titel og beskrivelse
+               - Brug fuzzy matching (fx "Østerbro" matcher også "Oesterbro" og "København Ø")
+               
+            3. URL validering:
+               - URL må ikke indeholde: "/search", "/soeg", "?soeg=", "/marketplace/search"
+               - URL skal indeholde specifikt ID eller adresse
+               - Ignorer kategori- og søgesider
 
             ############################
-            ##  OUTPUT-FORMAT          #
+            ##  OUTPUT FORMAT          #
             ############################
-            Returnér **KUN** ét JSON-objekt med EXAKT denne struktur:
-
             {{
-            "summary": "<kort dansk tekst der PRÆCIST matcher antallet af viste boliger i JSON>",
-
-            "andelsboliger": [
-                {{
-                "address":        "<string>",
-                "price_dkk":      <integer>,          // totalpris
-                "sqm":            <integer>,
-                "url":            "<string>",         // SKAL være direkte link til bolig
-                "source":         "<domain>",
-                "area":           "<Vesterbro|Østerbro|…>",
-                "key_features":   "<kort sætning>",
-                "missing_fields": ["price_dkk", "sqm"] // tom array hvis ingen mangler
-                }}  // sorter stigende på price_dkk
-            ],
-
-            "lejeboliger": [
-                {{
-                "address":        "<string>",
-                "rent_dkk":       <integer>,          // månedlig leje
-                "sqm":            <integer>,
-                "url":            "<string>",         // SKAL være direkte link til bolig
-                "source":         "<domain>",
-                "area":           "<Vesterbro|Østerbro|…>",
-                "key_features":   "<kort sætning>",
-                "missing_fields": ["rent_dkk", "sqm"] // tom array hvis ingen mangler
-                }}  // sorter stigende på rent_dkk
-            ]
+                "summary": "<kort dansk tekst der matcher antallet af viste boliger>",
+                "andelsboliger": [
+                    {{
+                        "address": "<string>",
+                        "price_dkk": <integer eller null>,
+                        "sqm": <integer eller null>,
+                        "url": "<string>",
+                        "source": "<domain>",
+                        "area": "<Vesterbro|Østerbro|…>",
+                        "key_features": "<kort sætning>",
+                        "missing_fields": ["price_dkk", "sqm"]
+                    }}
+                ],
+                "lejeboliger": [
+                    {{
+                        "address": "<string>",
+                        "rent_dkk": <integer eller null>,
+                        "sqm": <integer eller null>,
+                        "url": "<string>",
+                        "source": "<domain>",
+                        "area": "<Vesterbro|Østerbro|…>",
+                        "key_features": "<kort sætning>",
+                        "missing_fields": ["rent_dkk", "sqm"]
+                    }}
+                ]
             }}
 
             ############################
             ##  REGLER                 #
             ############################
-            1. Medtag KUN annoncer der matcher ALLE kriterier - vær EKSTREMT striks med dette.
-            2. Hvis et felt ikke kan udtrækkes, sæt feltet til null og tilføj navnet i "missing_fields".
-            3. Fjern dubletter (samme url eller adresse+sqm).
-            4. Summary SKAL matche det faktiske antal viste boliger i JSON output.
-            5. Ingen kommentarer eller forklaringer uden for JSON!
-            6. Hvis en bolig har missing_fields der gør at vi ikke kan verificere kriterierne (fx manglende pris eller kvm), så UDELAD den helt.
-            7. VIGTIGST: Kun medtag boliger hvor URL er et direkte link til en specifik bolig.
+            1. Inkluder bolig hvis:
+               - URL er et direkte link til en specifik bolig
+               - Område matcher en af de tilladte områder
+               - Hvis størrelse er kendt: mellem 45-140 m²
+               - Hvis pris er kendt: under maksimum
+            2. Hvis et felt ikke kan udtrækkes, sæt det til null og tilføj i missing_fields
+            3. Fjern dubletter (samme url eller adresse+sqm)
+            4. Summary skal matche det faktiske antal viste boliger
             """
         
         response = openai.ChatCompletion.create(
-            model="gpt-4",
+            model="gpt-4.1",
             messages=[
                 {"role": "system", "content": "Du er en hjælpsom assistent der behandler boligannoncer. Formatér informationen klart og verificér at annoncerne matcher søgekriterierne. Kommuniker på dansk."},
                 {"role": "user", "content": prompt}
             ]
         )
         
-        return response.choices[0].message['content']
+        result = response.choices[0].message['content']
+        print("Debug: OpenAI response:")
+        print(result)
+        
+        # Clean the response - remove markdown code block if present
+        if result.startswith('```'):
+            result = result.split('```')[1]  # Get content between first and second ```
+            if result.startswith('json'):
+                result = result[4:]  # Remove 'json' prefix
+            result = result.strip()
+        
+        # Validate JSON before returning
+        try:
+            json.loads(result)  # Test if it's valid JSON
+            return result
+        except json.JSONDecodeError as je:
+            print(f"Debug: Invalid JSON returned from OpenAI: {je}")
+            return None
+            
     except Exception as e:
         print(f"Fejl i OpenAI behandling: {str(e)}")
         logging.error(f"Fejl i OpenAI behandling: {str(e)}")
@@ -222,6 +250,10 @@ def send_email_report(results, recipient_email):
     Send search results via email
     """
     try:
+        print(f"Debug: Results input to send_email_report:")
+        print(f"Type: {type(results)}")
+        print(f"Value: {results}")
+        
         print(f"Attempting to send email to: {recipient_email}")
         print(f"Using email address: {os.getenv('EMAIL_ADDRESS')}")
         
@@ -245,65 +277,71 @@ def send_email_report(results, recipient_email):
         
         # Add summary
         if 'summary' in results_json:
-            formatted_results.append(f"<h3>Oversigt</h3>")
+            formatted_results.append("<h3>Oversigt</h3>")
             formatted_results.append(f"<p>{results_json['summary']}</p>")
         
         # Format andelsboliger
         if 'andelsboliger' in results_json:
             formatted_results.append("<h3>Andelsboliger</h3>")
             for bolig in results_json['andelsboliger']:
-                formatted_results.append("<div style='margin-bottom: 20px; padding: 10px; border: 1px solid #ddd; border-radius: 5px;'>")
-                formatted_results.append(f"<strong>Adresse:</strong> {bolig.get('address', 'Ikke angivet')}<br>")
-                formatted_results.append(f"<strong>Pris:</strong> {bolig.get('price_dkk', 'Ikke angivet'):,} DKK<br>".replace(',', '.') if bolig.get('price_dkk') else "<strong>Pris:</strong> Ikke angivet<br>")
-                formatted_results.append(f"<strong>Størrelse:</strong> {bolig.get('sqm', 'Ikke angivet')} m²<br>")
-                formatted_results.append(f"<strong>Område:</strong> {bolig.get('area', 'Ikke angivet')}<br>")
-                formatted_results.append(f"<strong>Beskrivelse:</strong> {bolig.get('key_features', 'Ingen beskrivelse')}<br>")
-                formatted_results.append(f"<strong>Link:</strong> <a href='{bolig.get('url', '#')}'>{bolig.get('source', 'Link')}</a><br>")
+                formatted_results.append('<div class="listing">')
+                formatted_results.append(f"<p><strong>Adresse:</strong> {bolig.get('address', 'Ikke angivet')}</p>")
+                formatted_results.append(f"<p><strong>Pris:</strong> {bolig.get('price_dkk', 'Ikke angivet'):,} DKK</p>".replace(',', '.') if bolig.get('price_dkk') else "<p><strong>Pris:</strong> Ikke angivet</p>")
+                formatted_results.append(f"<p><strong>Størrelse:</strong> {bolig.get('sqm', 'Ikke angivet')} m²</p>")
+                formatted_results.append(f"<p><strong>Område:</strong> {bolig.get('area', 'Ikke angivet')}</p>")
+                formatted_results.append(f"<p><strong>Beskrivelse:</strong> {bolig.get('key_features', 'Ingen beskrivelse')}</p>")
+                formatted_results.append(f"<p><strong>Link:</strong> <a href='{bolig.get('url', '#')}'>{bolig.get('source', 'Link')}</a></p>")
                 formatted_results.append("</div>")
         
         # Format lejeboliger
         if 'lejeboliger' in results_json:
             formatted_results.append("<h3>Lejeboliger</h3>")
             for bolig in results_json['lejeboliger']:
-                formatted_results.append("<div style='margin-bottom: 20px; padding: 10px; border: 1px solid #ddd; border-radius: 5px;'>")
-                formatted_results.append(f"<strong>Adresse:</strong> {bolig.get('address', 'Ikke angivet')}<br>")
-                formatted_results.append(f"<strong>Månedlig leje:</strong> {bolig.get('rent_dkk', 'Ikke angivet'):,} DKK<br>".replace(',', '.') if bolig.get('rent_dkk') else "<strong>Månedlig leje:</strong> Ikke angivet<br>")
-                formatted_results.append(f"<strong>Størrelse:</strong> {bolig.get('sqm', 'Ikke angivet')} m²<br>")
-                formatted_results.append(f"<strong>Område:</strong> {bolig.get('area', 'Ikke angivet')}<br>")
-                formatted_results.append(f"<strong>Beskrivelse:</strong> {bolig.get('key_features', 'Ingen beskrivelse')}<br>")
-                formatted_results.append(f"<strong>Link:</strong> <a href='{bolig.get('url', '#')}'>{bolig.get('source', 'Link')}</a><br>")
+                formatted_results.append('<div class="listing">')
+                formatted_results.append(f"<p><strong>Adresse:</strong> {bolig.get('address', 'Ikke angivet')}</p>")
+                formatted_results.append(f"<p><strong>Månedlig leje:</strong> {bolig.get('rent_dkk', 'Ikke angivet'):,} DKK</p>".replace(',', '.') if bolig.get('rent_dkk') else "<p><strong>Månedlig leje:</strong> Ikke angivet</p>")
+                formatted_results.append(f"<p><strong>Størrelse:</strong> {bolig.get('sqm', 'Ikke angivet')} m²</p>")
+                formatted_results.append(f"<p><strong>Område:</strong> {bolig.get('area', 'Ikke angivet')}</p>")
+                formatted_results.append(f"<p><strong>Beskrivelse:</strong> {bolig.get('key_features', 'Ingen beskrivelse')}</p>")
+                formatted_results.append(f"<p><strong>Link:</strong> <a href='{bolig.get('url', '#')}'>{bolig.get('source', 'Link')}</a></p>")
                 formatted_results.append("</div>")
 
-        # Format email subject and body
+        # Format email subject
         subject = f"Boligsøgning Resultater - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
         
-        # Create a properly formatted HTML body
+        # Create HTML email with proper CSS
+        css = """
+            body { font-family: Arial, sans-serif; line-height: 1.6; margin: 0; padding: 20px; }
+            h2, h3 { color: #2c3e50; margin-top: 20px; }
+            .container { max-width: 800px; margin: 0 auto; padding: 20px; }
+            .listing { margin-bottom: 20px; padding: 15px; border: 1px solid #ddd; border-radius: 5px; background-color: #fff; }
+            a { color: #3498db; text-decoration: none; }
+            a:hover { text-decoration: underline; }
+            p { margin: 8px 0; }
+            .footer { margin-top: 30px; color: #7f8c8d; border-top: 1px solid #eee; padding-top: 20px; }
+        """
+        
         html_content = f"""
+        <!DOCTYPE html>
         <html>
         <head>
-            <style>
-                body {{ font-family: Arial, sans-serif; line-height: 1.6; }}
-                h2, h3 {{ color: #2c3e50; }}
-                .container {{ max-width: 800px; margin: 0 auto; padding: 20px; }}
-                a {{ color: #3498db; text-decoration: none; }}
-                a:hover {{ text-decoration: underline; }}
-            </style>
+            <meta charset="utf-8">
+            <style>{css}</style>
         </head>
         <body>
             <div class="container">
-                <h2>Boligsøgning Resultater</h2>
+                <h2>Boligsøgning Resultater (Under udvikling - Cest la vie)</h2>
                 {''.join(formatted_results)}
-                <p style="margin-top: 30px; color: #7f8c8d;">
-                    Med Venlig Hilsen,<br>
-                    Boligsøgnings Bot
-                </p>
+                <div class="footer">
+                    <p>Med Venlig Hilsen,<br>Mikkel</p>
+                </div>
             </div>
         </body>
         </html>
         """
         
         print("Sending email...")
-        # Send email with both HTML and plain text
+        # Send email with HTML content
         yag.send(
             to=recipient_email,
             subject=subject,

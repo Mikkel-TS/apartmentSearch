@@ -4,6 +4,7 @@
 
 # Configuration files
 mapping.json
+credentials/
 
 # Python
 __pycache__/

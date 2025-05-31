@@ -3,7 +3,7 @@ import logging
 import json
 from datetime import datetime
 import yagmail
-import openai
+from openai import OpenAI
 from tavily import TavilyClient
 from dotenv import load_dotenv
 from .filter import filter_tavily_results
@@ -19,7 +19,7 @@ logging.basicConfig(
 load_dotenv()
 
 # Initialize OpenAI client
-openai.api_key = os.getenv('OPENAI_API_KEY')
+client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 tavily = TavilyClient(api_key=os.getenv('TAVILY_API_KEY'))
 
 # Define target areas
@@ -213,7 +213,7 @@ def process_search_results(andelsbolig_results, rental_results):
             4. Summary skal matche det faktiske antal viste boliger
             """
         
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-4.1",
             messages=[
                 {"role": "system", "content": "Du er en hjælpsom assistent der behandler boligannoncer. Formatér informationen klart og verificér at annoncerne matcher søgekriterierne. Kommuniker på dansk."},
@@ -221,7 +221,7 @@ def process_search_results(andelsbolig_results, rental_results):
             ]
         )
         
-        result = response.choices[0].message['content']
+        result = response.choices[0].message.content
         print("Debug: OpenAI response:")
         print(result)
         
